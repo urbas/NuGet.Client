@@ -14,10 +14,17 @@ namespace NuGet.Commands
             RestoreTargetGraph targetGraph,
             PackageSpec spec)
         {
-            var result = new Dictionary<string, LibraryIncludeType>(StringComparer.OrdinalIgnoreCase);
+            var result2 = new Dictionary<string, LibraryIncludeType>(StringComparer.OrdinalIgnoreCase);
+            var result = new Dictionary<string, IncludeFlags>(StringComparer.OrdinalIgnoreCase);
 
             // Walk dependencies
             FlattenDependencyTypesUnified(targetGraph, result);
+
+            // Convert to LibraryIncludeType
+            foreach (var pair in result)
+            {
+                result2.Add(pair.Key, GetFlagType(pair.Value));
+            }
 
             // Override flags for direct dependencies
             var directDependencies = spec.Dependencies.ToList();
@@ -33,22 +40,22 @@ namespace NuGet.Commands
             // user take control when needed.
             foreach (var dependency in directDependencies)
             {
-                if (result.ContainsKey(dependency.Name))
+                if (result2.ContainsKey(dependency.Name))
                 {
-                    result[dependency.Name] = dependency.IncludeType;
+                    result2[dependency.Name] = dependency.IncludeType;
                 }
                 else
                 {
-                    result.Add(dependency.Name, dependency.IncludeType);
+                    result2.Add(dependency.Name, dependency.IncludeType);
                 }
             }
 
-            return result;
+            return result2;
         }
 
         private static void FlattenDependencyTypesUnified(
             RestoreTargetGraph targetGraph,
-            Dictionary<string, LibraryIncludeType> result)
+            Dictionary<string, IncludeFlags> result)
         {
             var nodeQueue = new Queue<Node>(1);
             Node node = null;
@@ -79,7 +86,7 @@ namespace NuGet.Commands
                     if (unifiedNodes.TryGetValue(root.Key.Name, out unifiedRoot))
                     {
                         // Find the initial project -> dependency flags
-                        var typeIntersection = GetDependencyType(graph, root);
+                        var typeIntersection = GetFlags(GetDependencyType(graph, root));
 
                         node = new Node(root.Item, typeIntersection);
 
@@ -103,20 +110,16 @@ namespace NuGet.Commands
                 var rootId = node.Item.Key.Name;
 
                 // Combine results on the way up
-                LibraryIncludeType currentTypes;
+                IncludeFlags currentTypes;
                 if (result.TryGetValue(rootId, out currentTypes))
                 {
-                    if (ReferenceEquals(currentTypes, node.DependencyType)
-                        || (
-                            node.DependencyType.Keywords.Count <= currentTypes.Keywords.Count
-                            && node.DependencyType.Keywords.IsSubsetOf(currentTypes.Keywords))
-                        )
+                    if ((node.DependencyType & currentTypes) == node.DependencyType)
                     {
                         // Noop, this is done
                         continue;
                     }
 
-                    result[rootId] = currentTypes.Combine(node.DependencyType);
+                    result[rootId] = (currentTypes | node.DependencyType);
                 }
                 else
                 {
@@ -131,8 +134,9 @@ namespace NuGet.Commands
                     if (unifiedNodes.TryGetValue(dependency.Name, out child)
                         && !dependency.SuppressParent.Equals(LibraryIncludeType.All))
                     {
-                        var typeIntersection = node.DependencyType.Intersect(dependency.IncludeType)
-                            .Except(dependency.SuppressParent);
+                        IncludeFlags typeIntersection = 
+                            (node.DependencyType & GetFlags(dependency.IncludeType)) 
+                            & ~GetFlags(dependency.SuppressParent);
 
                         var childNode = new Node(child, typeIntersection);
                         nodeQueue.Enqueue(childNode);
@@ -143,13 +147,13 @@ namespace NuGet.Commands
 
         private class Node
         {
-            public Node(GraphItem<RemoteResolveResult> item, LibraryIncludeType dependencyType)
+            public Node(GraphItem<RemoteResolveResult> item, IncludeFlags dependencyType)
             {
                 DependencyType = dependencyType;
                 Item = item;
             }
 
-            public LibraryIncludeType DependencyType { get; }
+            public IncludeFlags DependencyType { get; }
 
             public GraphItem<RemoteResolveResult> Item { get; }
         }
@@ -204,6 +208,114 @@ namespace NuGet.Commands
             }
 
             return 5;
+        }
+
+        [Flags]
+        private enum IncludeFlags
+        {
+            None = 0,
+            Runtime = 1,
+            Compile = 2,
+            Build = 4,
+            Native = 8,
+            ContentFiles = 16,
+            All = 31,
+            NoContent = 15,
+            NoBuildOrContent = 11
+        }
+
+        private static IncludeFlags GetFlags(LibraryIncludeType includeType)
+        {
+            if (LibraryIncludeType.None.Equals(includeType))
+            {
+                return IncludeFlags.None;
+            }
+
+            if (LibraryIncludeType.All.Equals(includeType))
+            {
+                return IncludeFlags.All;
+            }
+
+            if (LibraryIncludeType.Default.Equals(includeType))
+            {
+                return IncludeFlags.NoContent;
+            }
+
+            if (LibraryIncludeType.DefaultSuppress.Equals(includeType))
+            {
+                return IncludeFlags.Build | IncludeFlags.ContentFiles;
+            }
+
+            IncludeFlags result = IncludeFlags.None;
+
+            if (includeType.Keywords.Contains(LibraryIncludeTypeFlag.Runtime))
+            {
+                result |= IncludeFlags.Runtime;
+            }
+
+            if (includeType.Keywords.Contains(LibraryIncludeTypeFlag.Compile))
+            {
+                result |= IncludeFlags.Compile;
+            }
+
+            if (includeType.Keywords.Contains(LibraryIncludeTypeFlag.Build))
+            {
+                result |= IncludeFlags.Build;
+            }
+
+            if (includeType.Keywords.Contains(LibraryIncludeTypeFlag.Native))
+            {
+                result |= IncludeFlags.Native;
+            }
+
+            if (includeType.Keywords.Contains(LibraryIncludeTypeFlag.ContentFiles))
+            {
+                result |= IncludeFlags.ContentFiles;
+            }
+
+            return result;
+        }
+
+        private static LibraryIncludeType GetFlagType(IncludeFlags flags)
+        {
+            if (flags == IncludeFlags.All)
+            {
+                return LibraryIncludeType.All;
+            }
+
+            if (flags == IncludeFlags.None)
+            {
+                return LibraryIncludeType.None;
+            }
+
+            List<LibraryIncludeTypeFlag> toAdd = new List<LibraryIncludeTypeFlag>();
+
+            if (flags.HasFlag(IncludeFlags.Runtime))
+            {
+                toAdd.Add(LibraryIncludeTypeFlag.Runtime);
+            }
+
+            if (flags.HasFlag(IncludeFlags.Compile))
+            {
+                toAdd.Add(LibraryIncludeTypeFlag.Compile);
+            }
+
+            if (flags.HasFlag(IncludeFlags.Build))
+            {
+                toAdd.Add(LibraryIncludeTypeFlag.Build);
+            }
+
+            if (flags.HasFlag(IncludeFlags.Native))
+            {
+                toAdd.Add(LibraryIncludeTypeFlag.Native);
+            }
+
+            if (flags.HasFlag(IncludeFlags.ContentFiles))
+            {
+                toAdd.Add(LibraryIncludeTypeFlag.ContentFiles);
+            }
+
+            return LibraryIncludeType.None.Combine(toAdd, Enumerable.Empty<LibraryIncludeTypeFlag>());
         }
     }
 }
