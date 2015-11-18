@@ -19,7 +19,6 @@ namespace NuGet.Packaging
             Stream packageStream,
             PackagePathResolver packagePathResolver,
             PackageExtractionContext packageExtractionContext,
-            PackageSaveModes packageSaveMode,
             CancellationToken token)
         {
             var filesAdded = new List<string>();
@@ -38,8 +37,13 @@ namespace NuGet.Packaging
                 throw new ArgumentNullException("packagePathResolver");
             }
 
-            // TODO: Need to handle PackageSaveMode
-            // TODO: Support overwriting files also?
+            if (packageExtractionContext == null)
+            {
+                packageExtractionContext = new PackageExtractionContext();
+            }
+
+            var packageSaveMode = packageExtractionContext.PackageSaveMode;
+
             var nupkgStartPosition = packageStream.Position;
             var zipArchive = new ZipArchive(packageStream);
 
@@ -63,8 +67,7 @@ namespace NuGet.Packaging
             }
 
             // Now, copy satellite files unless requested to not copy them
-            if (packageExtractionContext == null
-                || packageExtractionContext.CopySatelliteFiles)
+            if (packageExtractionContext.CopySatelliteFiles)
             {
                 filesAdded.AddRange(await CopySatelliteFilesAsync(packageIdentityFromNuspec, packagePathResolver, packageSaveMode, token));
             }
@@ -77,7 +80,6 @@ namespace NuGet.Packaging
             Stream packageStream,
             PackagePathResolver packagePathResolver,
             PackageExtractionContext packageExtractionContext,
-            PackageSaveModes packageSaveMode,
             CancellationToken token)
         {
             if (packageStream == null)
@@ -90,8 +92,13 @@ namespace NuGet.Packaging
                 throw new ArgumentNullException(nameof(packagePathResolver));
             }
 
-            // TODO: Need to handle PackageSaveMode
-            // TODO: Support overwriting files also?
+            if (packageExtractionContext == null)
+            {
+                packageExtractionContext = new PackageExtractionContext();
+            }
+
+            var packageSaveMode = packageExtractionContext.PackageSaveMode;
+
             var nupkgStartPosition = packageStream.Position;
             var filesAdded = new List<string>();
 
@@ -155,7 +162,7 @@ namespace NuGet.Packaging
             }
 
             // Now, copy satellite files unless requested to not copy them
-            if (packageExtractionContext == null || packageExtractionContext.CopySatelliteFiles)
+            if ( packageExtractionContext.CopySatelliteFiles)
             {
                 PackageIdentity runtimeIdentity;
                 string packageLanguage;
@@ -172,6 +179,7 @@ namespace NuGet.Packaging
 
             return filesAdded;
         }
+
         public static async Task<IEnumerable<string>> CopySatelliteFilesAsync(PackageIdentity packageIdentity, PackagePathResolver packagePathResolver,
             PackageSaveModes packageSaveMode, CancellationToken token)
         {

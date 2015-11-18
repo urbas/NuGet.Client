@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation. All rights reserved.
+﻿ // Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
@@ -19,10 +19,10 @@ namespace NuGet.Test.Utility
                                 <version>{1}</version>
                                 <authors>Author1, author2</authors>
                                 <description>Sample description</description>
-                                <language>en-US</language>
+                                <language>{2}</language>
                                 <projectUrl>http://www.nuget.org/</projectUrl>
                                 <licenseUrl>http://www.nuget.org/license</licenseUrl>
-                                {2}
+                                {3}
                               </metadata>
                             </package>";
 
@@ -578,10 +578,42 @@ namespace NuGet.Test.Utility
                 });
         }
 
+        public static FileInfo GetRuntimePackage(string path, string packageId, string packageVersion)
+        {
+            return GeneratePackage(path, packageId, packageVersion,
+                new[]
+                {
+                     "lib/net45/A.dll",
+                });
+        }
+
+        public static FileInfo GetSatellitePackage(string path, string packageId, string packageVersion)
+        {
+            return GeneratePackage(path, packageId + ".fr", packageVersion, "fr",
+                new[]
+                {
+                     "lib/net45/fr/A.fr.dll",
+                });
+        }
+
         private static FileInfo GeneratePackage(
             string path,
             string packageId,
             string packageVersion,
+            string[] zipEntries)
+        {
+            return GeneratePackage(path,
+                packageId,
+                packageVersion,
+                "en-US",
+                zipEntries);
+        }
+
+        private static FileInfo GeneratePackage(
+            string path,
+            string packageId,
+            string packageVersion,
+            string language,
             string[] zipEntries)
         {
             var zipContents = Enumerable.Repeat(string.Empty, zipEntries.Length).ToArray();
@@ -589,6 +621,7 @@ namespace NuGet.Test.Utility
                 path,
                 packageId,
                 packageVersion,
+                language,
                 zipEntries,
                 zipContents,
                 frameworkAssemblies: false,
@@ -599,6 +632,7 @@ namespace NuGet.Test.Utility
             string path,
             string packageId,
             string packageVersion,
+            string language,
             string[] zipEntries,
             string[] zipContents,
             bool frameworkAssemblies,
@@ -618,7 +652,7 @@ namespace NuGet.Test.Utility
                     zip.AddEntry(zipEntries[i], zipContents[i], Encoding.UTF8);
                 }
 
-                SetSimpleNuspec(zip, packageId, packageVersion, frameworkAssemblies, dependencies);
+                SetSimpleNuspec(zip, packageId, packageVersion, language, frameworkAssemblies, dependencies);
             }
 
             return fileInfo;
@@ -635,11 +669,13 @@ namespace NuGet.Test.Utility
         public static void SetSimpleNuspec(ZipArchive zip,
             string packageId,
             string packageVersion,
+            string language,
             bool frameworkAssemblies,
             bool dependencies)
         {
             zip.AddEntry(packageId + ".nuspec", GetSimpleNuspecString(packageId,
                 packageVersion,
+                language,
                 frameworkAssemblies,
                 dependencies),
                 Encoding.UTF8);
@@ -647,15 +683,29 @@ namespace NuGet.Test.Utility
 
         private static string GetSimpleNuspecString(string packageId,
             string packageVersion,
+            string language,
             bool frameworkAssemblies,
             bool dependencies)
         {
             var frameworkAssemblyReferences = frameworkAssemblies ?
                 string.Format(FrameworkAssembliesStringFormat, "System.Xml", "net45") : string.Empty;
 
-            var dependenciesString = dependencies ?
-                string.Format(DependenciesStringFormat, "Owin", "1.0") : string.Empty;
-            return string.Format(NuspecStringFormat, packageId, packageVersion,
+            string dependenciesString;
+            if (language == "en-US")
+            {
+                dependenciesString = dependencies ?
+                    string.Format(DependenciesStringFormat, "Owin", "1.0") : string.Empty;
+            }
+            else
+            {
+                // Since language is not english, it should be a satellite package
+                // Set the runtime package as a dependency
+                dependenciesString = string.Format(DependenciesStringFormat,
+                    packageId.Substring(0, packageId.Length - 1 - language.Length),
+                    "[" + packageVersion + "]");
+            }
+
+            return string.Format(NuspecStringFormat, packageId, packageVersion, language,
                 string.Join(Environment.NewLine, frameworkAssemblyReferences, dependenciesString));
         }
     }
